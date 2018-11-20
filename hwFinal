@@ -42,12 +42,12 @@ destandardize <- function(x.std, x){
 
 set.seed(999)
 
-Proportion_wet <- rep(0,1000)
-Ph_dist <- rep(0,1000)
-Pr_dist <- rep(0,1000)
-revenue <- rep(0,1000)
+Proportion_wet <- rep(0,10000)
+Ph_dist <- rep(0,10000)
+Pr_dist <- rep(0,10000)
+revenue <- rep(0,10000)
 
-for (i in 1:1000){
+for (i in 1:10000){
   ################ How many wet wells/ How many dry wells? ##############
   num_wells <- runif(1,10,30) #uniform distribution for number of wells
   
@@ -134,11 +134,11 @@ for (i in 1:1000){
     
     Rate <- rep(0,16)
     for ( x in 1:16){
-      Rate[x] <- IP*(1-Decline_rate)^(j-1)
+      Rate[x] <- IP*(1-Decline_rate)^(x-1)
     }
     Volume <- rep(0,15)
     for (z in 1:15){
-      Volume[z] <- 365*(Rate[j]+Rate[j+1])/2
+      Volume[z] <- 365*(Rate[z]+Rate[z+1])/2
     }
     
     FNR <- rep(0,15)
@@ -198,10 +198,10 @@ for (i in 1:1000){
     
     dry_well_costs[d] <- dry #create this separately for giving cost of single dry well
   }
-  revenue[i] <- (sum(NPV) - sum(dry_well_costs))/100000
+  revenue[i] <- (sum(NPV) - sum(dry_well_costs))
   
 }
-revenue = revenue*100000
+
 Value_at_Risk <- quantile(revenue,.05)
 Shortfall <- mean(revenue[revenue < Value_at_Risk])
 hist(revenue, breaks=50, main='Potential Revenues', xlab='Revenue', col= 'lightskyblue2')
