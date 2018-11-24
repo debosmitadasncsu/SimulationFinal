@@ -1,6 +1,9 @@
 library(tidyverse)
 library(readxl)
 library(triangle)
+library(truncnorm)
+library(Rlab)
+library(scales)
 
 Analysis_Data <- read_excel("/Users/adamtobias/Documents/MSA 19/Simulation and Risk/Analysis_Data.xlsx", 
                             sheet = "Drilling Cost", skip = 2)
@@ -40,190 +43,154 @@ destandardize <- function(x.std, x){
   return(x.old)
 }
 
-set.seed(999)
+set.seed(3181996)
+sim.count = 250000
+##production
 
-Proportion_wet <- rep(0,10000)
-Ph_dist <- rep(0,10000)
-Pr_dist <- rep(0,10000)
-revenue <- rep(0,10000)
+rate_begin <-  rlnorm(n = sim.count, meanlog = 6, sdlog = .28 )
+Decline_rate <- sample(15:32,sim.count,replace = TRUE)
 
-for (i in 1:10000){
-  ################ How many wet wells/ How many dry wells? ##############
-  num_wells <- runif(1,10,30) #uniform distribution for number of wells
-  
-  Ph <- rep(0,round(num_wells))
-  Pr <- rep(0,round(num_wells))
-  
-  #components of producing probabiliy
-  
+#correlation
+RR <- matrix(data=cbind(1,0.64, 0.64, 1), nrow=2)
+U <- t(chol(RR)) 
+Both <- cbind(standardize(Decline_rate), standardize(rate_begin))
+begin.r <- U %*% t(Both) #matrix multiplication with U. transpose data to make it work
+begin.r <- t(begin.r) #transpose it back
+
+final <- cbind(destandardize(begin.r[,1], Decline_rate), destandardize(begin.r[,2], rate_begin))
+
+### Calculate WACC
+WACC <- rep(0,15)
+for(k in 1:15){
+  WACC[k] <- (1 + 0.1)^k
+}
+
+net_revenue <- rep(0,sim.count) ### This is our target
+
+################ How many wet wells/ How many dry wells? ##############
+num_wells <- sample(10:30, sim.count, replace = TRUE) #uniform distribution for number of wells
+
+for (i in 1:sim.count){
   
   #put them all together
-  wet_dry <- rep(0,round(num_wells))
-  ppw_list <- rep(0,round(num_wells))
-  for(k in 1:round(num_wells)){
+  wet_dry <- rep(0,num_wells[i])
+  ppw_list <- rep(0,num_wells[i])
+  for(k in 1:num_wells[i]){
     Ph <- rtruncnorm(1,0,1,mean = .99, sd = .05)
     Pr <- rtruncnorm(1,0,1, mean = .8, sd = .1)
     Ppw <- Ph*Pr
-    ppw_list[k] <- Ppw
+    
+    wet_dry[k] <- rbinom(n = 1, size = 1, prob = Ppw)
   }
-    wet_dry <- rbern(round(num_wells),ppw_list)
   
   #bernoulli distribution decides if it is producing or not
   
   #take average for hydrocarbons and reservoir for each simulation
-  Ph_dist[i] <- mean(Ph)
-  Pr_dist[i] <- mean(Pr)
   
-  #find proportion
-  wet_wells <- count(wet_dry == 1)
-  dry_wells <- count(wet_dry == 0)
-  Proportion_wet[i] <- wet_wells/(wet_wells + dry_wells)
+  wet_wells <- sum(wet_dry) ## Save the number of wet wells for this sim
+  dry_wells <- (num_wells[i] - wet_wells) ## Save the number of dry wells for this simm
+  
   ##################### drilling costs ###############################
   ################ for each well ######################################
+  ##### First Prices ########
+  P0 <- 2279.80 # Baseline price at 2006 or time 0
+  r <- rnorm(n=1, mean=mean_norm, sd=sd_norm)
+  Pt <- P0*(1 + r) #2007
+  for(jj in 1:5){ # 2008-2012
+    r <- rnorm(n=1, mean=mean_norm, sd=sd_norm)
+    Pt <- Pt*(1+r)
+  }
+  for(ll in 1:3){ # 2013-2015
+    r <- rtriangle(1, a = 0.07, b = .22, c = .0917)
+    Pt <- Pt*(1-r)
+  }
+  for(bb in 1:4){ # 2016-2019
+    r <- rtriangle(1, a = 0.02, b = .06, c = .05)
+    Pt <- Pt*(1+r)
+  }
+  Pt.2019 <- Pt # This is now the 2019 cost for this ENTIRE simulation
+
+  price <- rep(0,15) # Prices for every year
+  for(k in 1:15){
+    price[k] <- rtriangle(1,as.integer(Oil_Prices[k + 1,3]),as.integer(Oil_Prices[k + 1,2]),as.integer(Oil_Prices[k + 1,4]))
+  }
+  operating_cost <- rep(0,15) #costs for every year
+  for(k in 1:15){
+    operating_cost[k] <- rnorm(1, 2.25, .3)
+  }
+  
+  
   NPV <- rep(0,wet_wells)
   for(w in 1:wet_wells){
-    P0 <- 2279.80*1000 # Baseline price at 2006 or time 0
-    
-    r <- rnorm(n=1, mean=mean_norm, sd=sd_norm)
-    
-    Pt <- P0*(1 + r) #2007
-    
-    for(jj in 1:5){ # 2008-2012
-      r <- rnorm(n=1, mean=mean_norm, sd=sd_norm)
-      Pt <- Pt*(1+r)
-    }
-    
-    for(ll in 1:3){ # 2013-2015
-      r <- rtriangle(1, a = 0.07, b = .22, c = .0917)
-      Pt <- Pt*(1-r)
-    }
-    
-    for(bb in 1:4){ # 2016-2019
-      r <- rtriangle(1, a = 0.02, b = .06, c = .05)
-      Pt <- Pt*(1+r)
-    }
-    
-    acres <- rnorm(n=1, mean=600, sd=50)
-    
-    seismic <- rnorm(n=1, mean = 3, sd = 0.35)
-    
     overhead <- rtriangle(1, a = 172000, b = 279500, c = 215000)
-    
-    dry <- (960*acres) + (43000*seismic) + overhead + Pt
+    acres <- rnorm(n=1, mean=600, sd=50)
+    seismic <- rnorm(n=1, mean = 3, sd = 0.35)
     
     completion <- rnorm(n=1, 390000, 50000)
     
-    initial_cost <- dry + completion -overhead
-    
-    ##production
-    
-    rate_begin <-  rlnorm(30, meanlog = 6, sdlog = .28 )
-    Decline_rate <- runif(30, .15,.32)
-    
-    #correlation
-    RR <- matrix(data=cbind(1,0.64, 0.64, 1), nrow=2)
-    U <- t(chol(RR)) 
-    Both <- cbind(standardize(rate_begin), standardize(Decline_rate))
-    begin.r <- U %*% t(Both) #matrix multiplication with U. transpose data to make it work
-    begin.r <- t(begin.r) #transpose it back
-    
-    final <- cbind(destandardize(begin.r[,1], rate_begin), destandardize(begin.r[,2], Decline_rate))
-    
-    IP <- final[1,1]
-    Decline_rate <- final[1,2]
-    
-    Rate <- rep(0,16)
-    for ( x in 1:16){
-      Rate[x] <- IP*(1-Decline_rate)^(x-1)
+    initial_cost <- (960*acres) + (43000*seismic) + overhead + Pt.2019*1000 + completion
+
+    Begin.Prod <- rep(0,15)
+    End.Prod <- rep(0,15)
+    for (x in 1:15){
+      Begin.Prod[x] <- final[w,2]*(1-final[w,1]/100)^(x-1)
+      End.Prod[x] <- final[w,2]*(1-final[w,1]/100)^(x)
     }
-    Volume <- rep(0,15)
-    for (z in 1:15){
-      Volume[z] <- 365*(Rate[z]+Rate[z+1])/2
-    }
+    Annual.vol <- 365*((Begin.Prod + End.Prod)/2)
+    Revenue <- Annual.vol*price
+    Total.Cost <- operating_cost*Annual.vol + overhead
     
-    FNR <- rep(0,15)
-    for(k in 1:15){
-      min <- as.integer(Oil_Prices[k,3])
-      max <- as.integer(Oil_Prices[k,2])
-      mean <- as.integer(Oil_Prices[k,4])
-      price <- rtriangle(1,min,max,mean)
-      
-      NRI <- rnorm(1, .75,.02) 
-      Revenue <- NRI*Volume[k]*price
-      
-      operating_rate <- rnorm(1, 2.25, .3)
-      operating_cost <- operating_rate*Volume[k]
-      
-      severance <-1 - 0.046
-      WACC = 0.1
-      
-      
-      FNR[k] <- ((severance*Revenue) - operating_cost-overhead)/((1+WACC)^k)
+    NRI <- rnorm(1, .75,.02) 
+    severance <- 0.046
+    Revenue.taxed <- Revenue*NRI*(1-severance)
+    
+    Net.Revenue.Taxed <- Revenue.taxed - Total.Cost
+    
+    NPV[w] = sum(Net.Revenue.Taxed/WACC) - initial_cost
       
     }
-    
-    ##NPV
-    NPV[w] = -initial_cost + sum(FNR) 
-  }
+  
   dry_well_costs <- rep(0,dry_wells)
   for(d in 1:dry_wells){
-    P0 <- 2279.80*1000 # Baseline price at 2006 or time 0
-    
-    r <- rnorm(n=1, mean=mean_norm, sd=sd_norm)
-    
-    Pt <- P0*(1 + r) #2007
-    
-    for(j in 1:5){ # 2008-2012
-      r <- rnorm(n=1, mean=mean_norm, sd=sd_norm)
-      Pt <- Pt*(1+r)
-    }
-    
-    for(l in 1:3){ # 2013-2015
-      r <- rtriangle(1, a = 0.07, b = .22, c = .0917)
-      Pt <- Pt*(1-r)
-    }
-    
-    for(b in 1:4){ # 2016-2019
-      r <- rtriangle(1, a = 0.02, b = .06, c = .05)
-      Pt <- Pt*(1+r)
-    }
-    
+    overhead <- rtriangle(1, a = 172000, b = 279500, c = 215000)
     acres <- rnorm(n=1, mean=600, sd=50)
-    
     seismic <- rnorm(n=1, mean = 3, sd = 0.35)
     
-    overhead <- rtriangle(1, a = 172000, b = 279500, c = 215000)
-    
-    dry <- (960*acres) + (43000*seismic) + overhead + Pt
-    
-    dry_well_costs[d] <- dry #create this separately for giving cost of single dry well
+    dry_well_costs[d] <- (960*acres) + (43000*seismic) + overhead + Pt.2019*1000 
+    #create this separately for giving cost of single dry well
   }
-  revenue[i] <- (sum(NPV) - sum(dry_well_costs))
-  
+  net_revenue[i] <- (sum(NPV) - sum(dry_well_costs))
 }
 
-Value_at_Risk <- quantile(revenue,.05)
-Shortfall <- mean(revenue[revenue < Value_at_Risk])
-hist(revenue, breaks=50, main='Potential Revenues', xlab='Revenue', col= 'lightskyblue2')
+Value_at_Risk <- quantile(net_revenue,.05)
+Shortfall <- mean(net_revenue[net_revenue < Value_at_Risk])
+median <- median(net_revenue)
+
+hist(net_revenue, breaks=50, main='Potential Net Revenues', xlab='Net Revenue', col= 'lightskyblue2')
+abline(v = median, col="red", lwd=2)
+mtext(paste("Median = ",dollar(median/1000000),"Million", sep = " "), at=median, col="red")
+
+
+hist(net_revenue, breaks=50, main='Potential Net Revenues', xlab='Net Revenue', col= 'lightskyblue2')
 abline(v = Value_at_Risk, col="red", lwd=2)
-mtext("5% VaR", at=Value_at_Risk, col="red")
+mtext(paste("5% VaR = ",dollar(Value_at_Risk/1000000),"Million", sep = " "), at=Value_at_Risk, col="red")
 
 
 
-n.bootstraps <- 100
-sample.size <- 100
+n.bootstraps <- 5000
+sample.size <- 5000
 VaR.percentile <- 0.05
 
 VaR.boot <- rep(0,n.bootstraps)
 ES.boot <- rep(0,n.bootstraps)
 for(i in 1:n.bootstraps){
-  bootstrap.sample <- sample(revenue, size=sample.size)
+  bootstrap.sample <- sample(net_revenue, size=sample.size)
   VaR.boot[i] <- quantile(bootstrap.sample, VaR.percentile, na.rm=TRUE)
   ES.boot[i] <- mean(bootstrap.sample[bootstrap.sample < VaR.boot[i]], na.rm=TRUE)
 }
-
 VaR.boot.U <- quantile(VaR.boot, 0.975, na.rm=TRUE)
 VaR.boot.L <- quantile(VaR.boot, 0.025, na.rm=TRUE)
 
 abline(v = VaR.boot.L, col="blue", lwd=2, lty="dashed")
 abline(v = VaR.boot.U, col="blue", lwd=2, lty="dashed")
+
